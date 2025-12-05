@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { prisma } = require('../config/prisma');
+const { sanitizeUser } = require('../utils/userHelpers');
 
 const auth = async (req, res, next) => {
   try {
@@ -17,7 +18,9 @@ const auth = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Get user from token
-    const user = await User.findById(decoded.id).select('-password');
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id }
+    });
 
     if (!user) {
       return res.status(401).json({
@@ -33,8 +36,8 @@ const auth = async (req, res, next) => {
       });
     }
 
-    // Attach user to request
-    req.user = user;
+    // Attach sanitized user to request
+    req.user = sanitizeUser(user);
     next();
   } catch (error) {
     res.status(401).json({
