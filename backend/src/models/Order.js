@@ -37,8 +37,8 @@ const orderSchema = new mongoose.Schema({
       min: 0
     },
     estimatedTime: {
-      type: Number,
-      comment: 'Estimated preparation time in minutes'
+      type: Number
+      // Estimated preparation time in minutes
     }
   }],
   totalPrice: {

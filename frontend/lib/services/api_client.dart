@@ -46,7 +46,13 @@ class ApiClient {
       LogInterceptor(
         requestBody: true,
         responseBody: true,
-        logPrint: (obj) => print(obj),
+        logPrint: (obj) {
+          // Only log in debug mode
+          assert(() {
+            print(obj);
+            return true;
+          }());
+        },
       ),
     );
   }

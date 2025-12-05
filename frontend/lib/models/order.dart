@@ -78,6 +78,7 @@ class OrderItem extends Equatable {
   final int quantity;
   final double price;
   final double subtotal;
+  final int? estimatedTime;
 
   const OrderItem({
     required this.foodId,
@@ -85,6 +86,7 @@ class OrderItem extends Equatable {
     required this.quantity,
     required this.price,
     required this.subtotal,
+    this.estimatedTime,
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) =>
@@ -92,7 +94,7 @@ class OrderItem extends Equatable {
   Map<String, dynamic> toJson() => _$OrderItemToJson(this);
 
   @override
-  List<Object?> get props => [foodId, name, quantity, price, subtotal];
+  List<Object?> get props => [foodId, name, quantity, price, subtotal, estimatedTime];
 }
 
 // Order Status
