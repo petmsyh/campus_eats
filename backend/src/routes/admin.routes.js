@@ -1,45 +1,60 @@
 const express = require('express');
 const router = express.Router();
 const { auth, authorize } = require('../middleware/auth');
-const User = require('../models/User');
-const Lounge = require('../models/Lounge');
-const Order = require('../models/Order');
-const University = require('../models/University');
-const Campus = require('../models/Campus');
-const Contract = require('../models/Contract');
-const Payment = require('../models/Payment');
+const { prisma } = require('../config/prisma');
 const logger = require('../utils/logger');
 
 // @route   GET /api/v1/admin/stats
 // @desc    Get system statistics
 // @access  Private (Admin)
-router.get('/stats', auth, authorize('admin'), async (req, res) => {
+router.get('/stats', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const stats = {
-      users: await User.countDocuments({ role: 'user' }),
-      lounges: await Lounge.countDocuments(),
-      approvedLounges: await Lounge.countDocuments({ isApproved: true }),
-      pendingLounges: await Lounge.countDocuments({ isApproved: false }),
-      orders: await Order.countDocuments(),
-      activeOrders: await Order.countDocuments({ status: { $in: ['pending', 'preparing', 'ready'] } }),
-      completedOrders: await Order.countDocuments({ status: 'delivered' }),
-      universities: await University.countDocuments(),
-      campuses: await Campus.countDocuments()
-    };
-
-    // Revenue statistics
-    const revenueData = await Order.aggregate([
-      { $match: { status: 'delivered' } },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: '$totalPrice' },
-          totalCommission: { $sum: '$commission' }
-        }
-      }
+    const [
+      users,
+      lounges,
+      approvedLounges,
+      pendingLounges,
+      orders,
+      activeOrders,
+      completedOrders,
+      universities,
+      campuses
+    ] = await Promise.all([
+      prisma.user.count({ where: { role: 'USER' } }),
+      prisma.lounge.count(),
+      prisma.lounge.count({ where: { isApproved: true } }),
+      prisma.lounge.count({ where: { isApproved: false } }),
+      prisma.order.count(),
+      prisma.order.count({ where: { status: { in: ['PENDING', 'PREPARING', 'READY'] } } }),
+      prisma.order.count({ where: { status: 'DELIVERED' } }),
+      prisma.university.count(),
+      prisma.campus.count()
     ]);
 
-    stats.revenue = revenueData[0] || { totalRevenue: 0, totalCommission: 0 };
+    // Revenue statistics
+    const revenueData = await prisma.order.aggregate({
+      where: { status: 'DELIVERED' },
+      _sum: {
+        totalPrice: true,
+        commission: true
+      }
+    });
+
+    const stats = {
+      users,
+      lounges,
+      approvedLounges,
+      pendingLounges,
+      orders,
+      activeOrders,
+      completedOrders,
+      universities,
+      campuses,
+      revenue: {
+        totalRevenue: revenueData._sum.totalPrice || 0,
+        totalCommission: revenueData._sum.commission || 0
+      }
+    };
 
     res.status(200).json({
       success: true,
@@ -57,23 +72,29 @@ router.get('/stats', auth, authorize('admin'), async (req, res) => {
 // @route   GET /api/v1/admin/users
 // @desc    Get all users
 // @access  Private (Admin)
-router.get('/users', auth, authorize('admin'), async (req, res) => {
+router.get('/users', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const { role, universityId, campusId, page = 1, limit = 20 } = req.query;
+    const { role, page = 1, limit = 10 } = req.query;
 
-    const query = {};
-    if (role) query.role = role;
-    if (universityId) query.universityId = universityId;
-    if (campusId) query.campusId = campusId;
+    const where = {};
+    if (role) where.role = role.toUpperCase();
 
-    const users = await User.find(query)
-      .populate('universityId', 'name')
-      .populate('campusId', 'name')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const total = await User.countDocuments(query);
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        include: {
+          university: { select: { name: true } },
+          campus: { select: { name: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.user.count({ where })
+    ]);
 
     res.status(200).json({
       success: true,
@@ -81,7 +102,7 @@ router.get('/users', auth, authorize('admin'), async (req, res) => {
       pagination: {
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / take)
       }
     });
   } catch (error) {
@@ -93,25 +114,17 @@ router.get('/users', auth, authorize('admin'), async (req, res) => {
   }
 });
 
-// @route   PUT /api/v1/admin/users/:id/status
-// @desc    Activate/Deactivate user
+// @route   PUT /api/v1/admin/users/:id
+// @desc    Update user (activate/deactivate)
 // @access  Private (Admin)
-router.put('/users/:id/status', auth, authorize('admin'), async (req, res) => {
+router.put('/users/:id', auth, authorize('ADMIN'), async (req, res) => {
   try {
     const { isActive } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { isActive },
-      { new: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { isActive }
+    });
 
     res.status(200).json({
       success: true,
@@ -119,7 +132,7 @@ router.put('/users/:id/status', auth, authorize('admin'), async (req, res) => {
       data: user
     });
   } catch (error) {
-    logger.error('Update user status error:', error);
+    logger.error('Update user error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -128,26 +141,33 @@ router.put('/users/:id/status', auth, authorize('admin'), async (req, res) => {
 });
 
 // @route   GET /api/v1/admin/lounges
-// @desc    Get all lounges
+// @desc    Get all lounges (including pending approval)
 // @access  Private (Admin)
-router.get('/lounges', auth, authorize('admin'), async (req, res) => {
+router.get('/lounges', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const { isApproved, universityId, campusId, page = 1, limit = 20 } = req.query;
+    const { status, page = 1, limit = 10 } = req.query;
 
-    const query = {};
-    if (isApproved !== undefined) query.isApproved = isApproved === 'true';
-    if (universityId) query.universityId = universityId;
-    if (campusId) query.campusId = campusId;
+    const where = {};
+    if (status === 'pending') where.isApproved = false;
+    if (status === 'approved') where.isApproved = true;
 
-    const lounges = await Lounge.find(query)
-      .populate('ownerId', 'name phone')
-      .populate('universityId', 'name')
-      .populate('campusId', 'name')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const total = await Lounge.countDocuments(query);
+    const [lounges, total] = await Promise.all([
+      prisma.lounge.findMany({
+        where,
+        include: {
+          owner: { select: { name: true, phone: true } },
+          university: { select: { name: true } },
+          campus: { select: { name: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.lounge.count({ where })
+    ]);
 
     res.status(200).json({
       success: true,
@@ -155,7 +175,7 @@ router.get('/lounges', auth, authorize('admin'), async (req, res) => {
       pagination: {
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / take)
       }
     });
   } catch (error) {
@@ -168,24 +188,16 @@ router.get('/lounges', auth, authorize('admin'), async (req, res) => {
 });
 
 // @route   PUT /api/v1/admin/lounges/:id/approve
-// @desc    Approve/Reject lounge
+// @desc    Approve or reject lounge
 // @access  Private (Admin)
-router.put('/lounges/:id/approve', auth, authorize('admin'), async (req, res) => {
+router.put('/lounges/:id/approve', auth, authorize('ADMIN'), async (req, res) => {
   try {
     const { isApproved } = req.body;
 
-    const lounge = await Lounge.findByIdAndUpdate(
-      req.params.id,
-      { isApproved },
-      { new: true }
-    );
-
-    if (!lounge) {
-      return res.status(404).json({
-        success: false,
-        message: 'Lounge not found'
-      });
-    }
+    const lounge = await prisma.lounge.update({
+      where: { id: req.params.id },
+      data: { isApproved }
+    });
 
     res.status(200).json({
       success: true,
@@ -201,40 +213,22 @@ router.put('/lounges/:id/approve', auth, authorize('admin'), async (req, res) =>
   }
 });
 
-// @route   GET /api/v1/admin/universities
-// @desc    Get all universities
-// @access  Private (Admin)
-router.get('/universities', auth, authorize('admin'), async (req, res) => {
-  try {
-    const universities = await University.find().sort('name');
-
-    res.status(200).json({
-      success: true,
-      data: universities
-    });
-  } catch (error) {
-    logger.error('Get universities error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
 // @route   POST /api/v1/admin/universities
 // @desc    Create university
 // @access  Private (Admin)
-router.post('/universities', auth, authorize('admin'), async (req, res) => {
+router.post('/universities', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const { name, code, location } = req.body;
+    const { name, code, city, region } = req.body;
 
-    const university = new University({
-      name,
-      code,
-      location
+    const university = await prisma.university.create({
+      data: {
+        name,
+        code: code.toUpperCase(),
+        city,
+        region,
+        country: 'Ethiopia'
+      }
     });
-
-    await university.save();
 
     res.status(201).json({
       success: true,
@@ -250,25 +244,26 @@ router.post('/universities', auth, authorize('admin'), async (req, res) => {
   }
 });
 
-// @route   GET /api/v1/admin/campuses
-// @desc    Get all campuses
+// @route   GET /api/v1/admin/universities
+// @desc    Get all universities
 // @access  Private (Admin)
-router.get('/campuses', auth, authorize('admin'), async (req, res) => {
+router.get('/universities', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const { universityId } = req.query;
-
-    const query = universityId ? { universityId } : {};
-
-    const campuses = await Campus.find(query)
-      .populate('universityId', 'name code')
-      .sort('name');
+    const universities = await prisma.university.findMany({
+      include: {
+        _count: {
+          select: { campuses: true, users: true, lounges: true }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
 
     res.status(200).json({
       success: true,
-      data: campuses
+      data: universities
     });
   } catch (error) {
-    logger.error('Get campuses error:', error);
+    logger.error('Get universities error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -279,17 +274,19 @@ router.get('/campuses', auth, authorize('admin'), async (req, res) => {
 // @route   POST /api/v1/admin/campuses
 // @desc    Create campus
 // @access  Private (Admin)
-router.post('/campuses', auth, authorize('admin'), async (req, res) => {
+router.post('/campuses', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const { name, universityId, location } = req.body;
+    const { name, universityId, address, latitude, longitude } = req.body;
 
-    const campus = new Campus({
-      name,
-      universityId,
-      location
+    const campus = await prisma.campus.create({
+      data: {
+        name,
+        universityId,
+        address,
+        latitude,
+        longitude
+      }
     });
-
-    await campus.save();
 
     res.status(201).json({
       success: true,
@@ -305,41 +302,33 @@ router.post('/campuses', auth, authorize('admin'), async (req, res) => {
   }
 });
 
-// @route   GET /api/v1/admin/orders
-// @desc    Get all orders
+// @route   GET /api/v1/admin/campuses
+// @desc    Get all campuses
 // @access  Private (Admin)
-router.get('/orders', auth, authorize('admin'), async (req, res) => {
+router.get('/campuses', auth, authorize('ADMIN'), async (req, res) => {
   try {
-    const { status, startDate, endDate, page = 1, limit = 20 } = req.query;
+    const { universityId } = req.query;
 
-    const query = {};
-    if (status) query.status = status;
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
+    const where = {};
+    if (universityId) where.universityId = universityId;
 
-    const orders = await Order.find(query)
-      .populate('userId', 'name phone')
-      .populate('loungeId', 'name')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Order.countDocuments(query);
+    const campuses = await prisma.campus.findMany({
+      where,
+      include: {
+        university: { select: { name: true } },
+        _count: {
+          select: { users: true, lounges: true }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
 
     res.status(200).json({
       success: true,
-      data: orders,
-      pagination: {
-        total,
-        page: parseInt(page),
-        pages: Math.ceil(total / limit)
-      }
+      data: campuses
     });
   } catch (error) {
-    logger.error('Get orders error:', error);
+    logger.error('Get campuses error:', error);
     res.status(500).json({
       success: false,
       message: error.message

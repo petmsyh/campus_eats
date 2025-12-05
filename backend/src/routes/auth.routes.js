@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const User = require('../models/User');
+const { prisma } = require('../config/prisma');
 const { generateToken } = require('../utils/jwt');
 const { generateOTP, getOTPExpiry, verifyOTP } = require('../utils/otp');
+const { hashPassword, comparePassword, sanitizeUser } = require('../utils/userHelpers');
 const logger = require('../utils/logger');
 
 // @route   POST /api/v1/auth/register
@@ -14,8 +15,11 @@ router.post('/register', async (req, res) => {
     const { name, phone, email, password, universityId, campusId, role } = req.body;
 
     // Check if user exists
-    let user = await User.findOne({ phone });
-    if (user) {
+    const existingUser = await prisma.user.findUnique({ 
+      where: { phone }
+    });
+    
+    if (existingUser) {
       return res.status(400).json({
         success: false,
         message: 'User already exists with this phone number'
@@ -26,22 +30,23 @@ router.post('/register', async (req, res) => {
     const otpCode = generateOTP();
     const otpExpiry = getOTPExpiry();
 
+    // Hash password
+    const hashedPassword = await hashPassword(password);
+
     // Create user
-    user = new User({
-      name,
-      phone,
-      email,
-      password,
-      universityId,
-      campusId,
-      role: role || 'user',
-      otp: {
-        code: otpCode,
-        expiresAt: otpExpiry
+    const user = await prisma.user.create({
+      data: {
+        name,
+        phone,
+        email: email || null,
+        password: hashedPassword,
+        universityId,
+        campusId,
+        role: role ? role.toUpperCase() : 'USER',
+        otpCode,
+        otpExpiresAt: otpExpiry
       }
     });
-
-    await user.save();
 
     // TODO: Send OTP via SMS service (e.g., Africa's Talking, Twilio)
     // For development, OTP can be retrieved from database or logs
@@ -55,7 +60,7 @@ router.post('/register', async (req, res) => {
       success: true,
       message: 'User registered successfully. Please verify OTP.',
       data: {
-        userId: user._id,
+        userId: user.id,
         phone: user.phone,
         // In development, send OTP in response
         ...(process.env.NODE_ENV === 'development' && { otp: otpCode })
@@ -77,7 +82,10 @@ router.post('/verify-otp', async (req, res) => {
   try {
     const { phone, otp } = req.body;
 
-    const user = await User.findOne({ phone }).select('+otp');
+    const user = await prisma.user.findUnique({ 
+      where: { phone }
+    });
+    
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -86,7 +94,7 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     // Verify OTP
-    const verification = verifyOTP(user.otp?.code, otp, user.otp?.expiresAt);
+    const verification = verifyOTP(user.otpCode, otp, user.otpExpiresAt);
     if (!verification.valid) {
       return res.status(400).json({
         success: false,
@@ -95,19 +103,24 @@ router.post('/verify-otp', async (req, res) => {
     }
 
     // Activate account
-    user.isVerified = true;
-    user.otp = undefined;
-    await user.save();
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        isVerified: true,
+        otpCode: null,
+        otpExpiresAt: null
+      }
+    });
 
     // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(updatedUser.id);
 
     res.status(200).json({
       success: true,
       message: 'Account verified successfully',
       data: {
         token,
-        user
+        user: sanitizeUser(updatedUser)
       }
     });
   } catch (error) {
@@ -127,7 +140,10 @@ router.post('/login', async (req, res) => {
     const { phone, password } = req.body;
 
     // Check if user exists
-    const user = await User.findOne({ phone }).select('+password');
+    const user = await prisma.user.findUnique({ 
+      where: { phone }
+    });
+    
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -136,7 +152,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Check password
-    const isMatch = await user.comparePassword(password);
+    const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(401).json({
         success: false,
@@ -159,18 +175,20 @@ router.post('/login', async (req, res) => {
     }
 
     // Update last login
-    user.lastLogin = new Date();
-    await user.save();
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLogin: new Date() }
+    });
 
     // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(updatedUser.id);
 
     res.status(200).json({
       success: true,
       message: 'Login successful',
       data: {
         token,
-        user: user.toJSON()
+        user: sanitizeUser(updatedUser)
       }
     });
   } catch (error) {
@@ -189,7 +207,10 @@ router.post('/resend-otp', async (req, res) => {
   try {
     const { phone } = req.body;
 
-    const user = await User.findOne({ phone });
+    const user = await prisma.user.findUnique({ 
+      where: { phone }
+    });
+    
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -208,11 +229,13 @@ router.post('/resend-otp', async (req, res) => {
     const otpCode = generateOTP();
     const otpExpiry = getOTPExpiry();
 
-    user.otp = {
-      code: otpCode,
-      expiresAt: otpExpiry
-    };
-    await user.save();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpCode,
+        otpExpiresAt: otpExpiry
+      }
+    });
 
     // TODO: Send OTP via SMS service (e.g., Africa's Talking, Twilio)
     // SECURITY: Never log OTP in production - implement SMS service

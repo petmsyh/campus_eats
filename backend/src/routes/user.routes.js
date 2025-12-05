@@ -1,9 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const User = require('../models/User');
-const Contract = require('../models/Contract');
-const Order = require('../models/Order');
+const { prisma } = require('../config/prisma');
 const logger = require('../utils/logger');
 
 // @route   GET /api/v1/users/profile
@@ -11,9 +9,13 @@ const logger = require('../utils/logger');
 // @access  Private
 router.get('/profile', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id)
-      .populate('universityId', 'name code')
-      .populate('campusId', 'name');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: {
+        university: { select: { name: true, code: true } },
+        campus: { select: { name: true } }
+      }
+    });
 
     res.status(200).json({
       success: true,
@@ -35,15 +37,14 @@ router.put('/profile', auth, async (req, res) => {
   try {
     const { name, email, fcmToken } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
-      {
-        name,
-        email,
-        ...(fcmToken && { fcmToken })
-      },
-      { new: true, runValidators: true }
-    );
+    const updateData = { name };
+    if (email !== undefined) updateData.email = email;
+    if (fcmToken) updateData.fcmToken = fcmToken;
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: updateData
+    });
 
     res.status(200).json({
       success: true,
@@ -64,7 +65,10 @@ router.put('/profile', auth, async (req, res) => {
 // @access  Private
 router.get('/wallet', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { walletBalance: true }
+    });
 
     res.status(200).json({
       success: true,
@@ -86,9 +90,13 @@ router.get('/wallet', auth, async (req, res) => {
 // @access  Private
 router.get('/contracts', auth, async (req, res) => {
   try {
-    const contracts = await Contract.find({ userId: req.user.id })
-      .populate('loungeId', 'name logo')
-      .sort('-createdAt');
+    const contracts = await prisma.contract.findMany({
+      where: { userId: req.user.id },
+      include: {
+        lounge: { select: { name: true, logo: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
 
     res.status(200).json({
       success: true,
@@ -110,17 +118,29 @@ router.get('/orders', auth, async (req, res) => {
   try {
     const { status, page = 1, limit = 10 } = req.query;
 
-    const query = { userId: req.user.id };
-    if (status) query.status = status;
+    const where = { userId: req.user.id };
+    if (status) where.status = status.toUpperCase();
 
-    const orders = await Order.find(query)
-      .populate('loungeId', 'name logo')
-      .populate('items.foodId', 'name image')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const total = await Order.countDocuments(query);
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        include: {
+          lounge: { select: { name: true, logo: true } },
+          items: {
+            include: {
+              food: { select: { name: true, image: true } }
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.order.count({ where })
+    ]);
 
     res.status(200).json({
       success: true,
@@ -128,7 +148,7 @@ router.get('/orders', auth, async (req, res) => {
       pagination: {
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / take)
       }
     });
   } catch (error) {
