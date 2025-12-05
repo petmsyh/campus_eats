@@ -4,7 +4,12 @@ const logger = require('../utils/logger');
 class NotificationService {
   constructor() {
     // Initialize Firebase Admin only if credentials are provided
-    if (process.env.FCM_SERVER_KEY && process.env.FCM_PROJECT_ID) {
+    const hasRequiredCredentials = 
+      process.env.FCM_PROJECT_ID &&
+      process.env.FCM_PRIVATE_KEY &&
+      process.env.FCM_CLIENT_EMAIL;
+
+    if (hasRequiredCredentials) {
       try {
         admin.initializeApp({
           credential: admin.credential.cert({
@@ -16,11 +21,11 @@ class NotificationService {
         this.messaging = admin.messaging();
         logger.info('✅ Firebase Admin initialized');
       } catch (error) {
-        logger.warn('Firebase Admin initialization failed:', error.message);
+        logger.error('Firebase Admin initialization failed:', error.message);
         this.messaging = null;
       }
     } else {
-      logger.warn('FCM credentials not provided, notifications disabled');
+      logger.warn('FCM credentials not provided. Required: FCM_PROJECT_ID, FCM_PRIVATE_KEY, FCM_CLIENT_EMAIL');
       this.messaging = null;
     }
   }

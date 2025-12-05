@@ -27,7 +27,7 @@ connectDB();
 // Middleware
 app.use(helmet()); // Security headers
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : false),
   credentials: true
 }));
 app.use(express.json());
