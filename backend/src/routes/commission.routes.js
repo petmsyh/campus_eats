@@ -1,60 +1,60 @@
 const express = require('express');
 const router = express.Router();
 const { auth, authorize } = require('../middleware/auth');
-const Commission = require('../models/Commission');
+const { prisma } = require('../config/prisma');
 const logger = require('../utils/logger');
 
 // @route   GET /api/v1/commissions
-// @desc    Get commissions (filtered by lounge for lounge owners)
-// @access  Private (Lounge/Admin)
-router.get('/', auth, authorize('lounge', 'admin'), async (req, res) => {
+// @desc    Get commissions (admin or lounge owner)
+// @access  Private
+router.get('/', auth, async (req, res) => {
   try {
-    const { status, startDate, endDate, page = 1, limit = 10 } = req.query;
+    const { loungeId, status, page = 1, limit = 10 } = req.query;
 
-    let query = {};
+    let where = {};
 
-    // If lounge owner, filter by their lounges
-    if (req.user.role === 'lounge') {
-      const Lounge = require('../models/Lounge');
-      const lounges = await Lounge.find({ ownerId: req.user.id });
-      const loungeIds = lounges.map(l => l._id);
-      query.loungeId = { $in: loungeIds };
+    if (req.user.role === 'LOUNGE') {
+      // Get lounges owned by this user
+      const lounges = await prisma.lounge.findMany({
+        where: { ownerId: req.user.id },
+        select: { id: true }
+      });
+      const loungeIds = lounges.map(l => l.id);
+      where.loungeId = { in: loungeIds };
+    } else if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized'
+      });
     }
 
-    if (status) query.status = status;
+    if (loungeId && req.user.role === 'ADMIN') where.loungeId = loungeId;
+    if (status) where.status = status.toUpperCase();
 
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const commissions = await Commission.find(query)
-      .populate('orderId', 'totalPrice status createdAt')
-      .populate('loungeId', 'name')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Commission.countDocuments(query);
-
-    // Calculate totals
-    const totalAmount = await Commission.aggregate([
-      { $match: query },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
+    const [commissions, total] = await Promise.all([
+      prisma.commission.findMany({
+        where,
+        include: {
+          lounge: { select: { name: true } },
+          order: { select: { id: true, createdAt: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.commission.count({ where })
     ]);
 
     res.status(200).json({
       success: true,
       data: commissions,
-      summary: {
-        totalCommission: totalAmount[0]?.total || 0,
-        totalRecords: total
-      },
       pagination: {
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / take)
       }
     });
   } catch (error) {
@@ -66,86 +66,52 @@ router.get('/', auth, authorize('lounge', 'admin'), async (req, res) => {
   }
 });
 
-// @route   GET /api/v1/commissions/report
-// @desc    Get commission report
-// @access  Private (Admin)
-router.get('/report', auth, authorize('admin'), async (req, res) => {
+// @route   GET /api/v1/commissions/stats
+// @desc    Get commission statistics
+// @access  Private (Admin or Lounge owner)
+router.get('/stats', auth, async (req, res) => {
   try {
-    const { startDate, endDate, loungeId } = req.query;
+    let where = {};
 
-    const matchQuery = {};
-    
-    if (startDate || endDate) {
-      matchQuery.createdAt = {};
-      if (startDate) matchQuery.createdAt.$gte = new Date(startDate);
-      if (endDate) matchQuery.createdAt.$lte = new Date(endDate);
+    if (req.user.role === 'LOUNGE') {
+      const lounges = await prisma.lounge.findMany({
+        where: { ownerId: req.user.id },
+        select: { id: true }
+      });
+      const loungeIds = lounges.map(l => l.id);
+      where.loungeId = { in: loungeIds };
+    } else if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized'
+      });
     }
 
-    if (loungeId) matchQuery.loungeId = loungeId;
-
-    // Aggregate commission data
-    const report = await Commission.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: '$loungeId',
-          totalCommission: { $sum: '$amount' },
-          totalOrders: { $sum: 1 },
-          averageCommission: { $avg: '$amount' },
-          totalOrderAmount: { $sum: '$orderAmount' }
-        }
-      },
-      {
-        $lookup: {
-          from: 'lounges',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'lounge'
-        }
-      },
-      {
-        $unwind: '$lounge'
-      },
-      {
-        $project: {
-          loungeName: '$lounge.name',
-          totalCommission: 1,
-          totalOrders: 1,
-          averageCommission: 1,
-          totalOrderAmount: 1
-        }
-      },
-      {
-        $sort: { totalCommission: -1 }
-      }
-    ]);
-
-    // Overall totals
-    const overallTotals = await Commission.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: null,
-          totalCommission: { $sum: '$amount' },
-          totalOrders: { $sum: 1 },
-          totalOrderAmount: { $sum: '$orderAmount' }
-        }
-      }
+    const [total, pending, paid] = await Promise.all([
+      prisma.commission.aggregate({
+        where,
+        _sum: { amount: true }
+      }),
+      prisma.commission.aggregate({
+        where: { ...where, status: 'PENDING' },
+        _sum: { amount: true }
+      }),
+      prisma.commission.aggregate({
+        where: { ...where, status: 'PAID' },
+        _sum: { amount: true }
+      })
     ]);
 
     res.status(200).json({
       success: true,
       data: {
-        byLounge: report,
-        overall: overallTotals[0] || {
-          totalCommission: 0,
-          totalOrders: 0,
-          totalOrderAmount: 0
-        }
+        total: total._sum.amount || 0,
+        pending: pending._sum.amount || 0,
+        paid: paid._sum.amount || 0
       }
     });
   } catch (error) {
-    logger.error('Get commission report error:', error);
+    logger.error('Get commission stats error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -154,34 +120,28 @@ router.get('/report', auth, authorize('admin'), async (req, res) => {
 });
 
 // @route   PUT /api/v1/commissions/:id/status
-// @desc    Update commission status
-// @access  Private (Admin)
-router.put('/:id/status', auth, authorize('admin'), async (req, res) => {
+// @desc    Update commission status (mark as paid)
+// @access  Private (Admin only)
+router.put('/:id/status', auth, authorize('ADMIN'), async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!['pending', 'paid', 'cancelled'].includes(status)) {
+    if (!['PAID', 'CANCELLED'].includes(status.toUpperCase())) {
       return res.status(400).json({
         success: false,
         message: 'Invalid status'
       });
     }
 
-    const commission = await Commission.findById(req.params.id);
-
-    if (!commission) {
-      return res.status(404).json({
-        success: false,
-        message: 'Commission not found'
-      });
+    const updateData = { status: status.toUpperCase() };
+    if (status.toUpperCase() === 'PAID') {
+      updateData.paidAt = new Date();
     }
 
-    commission.status = status;
-    if (status === 'paid') {
-      commission.paidAt = new Date();
-    }
-
-    await commission.save();
+    const commission = await prisma.commission.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
 
     res.status(200).json({
       success: true,
@@ -190,6 +150,58 @@ router.put('/:id/status', auth, authorize('admin'), async (req, res) => {
     });
   } catch (error) {
     logger.error('Update commission status error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @route   GET /api/v1/commissions/:id
+// @desc    Get commission by ID
+// @access  Private
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const commission = await prisma.commission.findUnique({
+      where: { id: req.params.id },
+      include: {
+        lounge: true,
+        order: true
+      }
+    });
+
+    if (!commission) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commission not found'
+      });
+    }
+
+    // Check authorization
+    if (req.user.role === 'LOUNGE') {
+      const lounge = await prisma.lounge.findUnique({
+        where: { id: commission.loungeId }
+      });
+      
+      if (!lounge || lounge.ownerId !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized'
+        });
+      }
+    } else if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: commission
+    });
+  } catch (error) {
+    logger.error('Get commission error:', error);
     res.status(500).json({
       success: false,
       message: error.message

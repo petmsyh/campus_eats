@@ -1,20 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const { auth } = require('../middleware/auth');
-const Payment = require('../models/Payment');
-const Contract = require('../models/Contract');
-const Order = require('../models/Order');
+const { prisma } = require('../config/prisma');
 const chapaService = require('../services/chapa.service');
 const logger = require('../utils/logger');
 
 // @route   POST /api/v1/payments/initialize
-// @desc    Initialize payment with Chapa
+// @desc    Initialize Chapa payment
 // @access  Private
 router.post('/initialize', auth, async (req, res) => {
   try {
-    const { paymentId, returnUrl } = req.body;
+    const { paymentId } = req.body;
 
-    const payment = await Payment.findById(paymentId);
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId }
+    });
 
     if (!payment) {
       return res.status(404).json({
@@ -23,51 +23,52 @@ router.post('/initialize', auth, async (req, res) => {
       });
     }
 
-    // Check ownership
-    if (payment.userId.toString() !== req.user.id) {
+    if (payment.userId !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized'
       });
     }
 
-    if (payment.status === 'completed') {
+    if (payment.status !== 'PENDING') {
       return res.status(400).json({
         success: false,
-        message: 'Payment already completed'
+        message: 'Payment already processed'
       });
     }
 
-    // Generate unique reference
-    const reference = `CE-${Date.now()}-${payment._id}`;
-    payment.chapaReference = reference;
-    await payment.save();
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id }
+    });
 
     // Initialize Chapa payment
     const chapaResponse = await chapaService.initializePayment({
       amount: payment.amount,
-      email: req.user.email || `${req.user.phone}@campuseats.et`,
-      firstName: req.user.name.split(' ')[0],
-      lastName: req.user.name.split(' ').slice(1).join(' ') || 'User',
-      phone: req.user.phone,
-      reference,
-      returnUrl: returnUrl || process.env.FRONTEND_URL,
-      description: `Payment for ${payment.type}`
+      email: user.email || `${user.phone}@example.com`,
+      first_name: user.name.split(' ')[0],
+      last_name: user.name.split(' ').slice(1).join(' ') || user.name,
+      tx_ref: payment.id,
+      callback_url: process.env.CHAPA_CALLBACK_URL,
+      return_url: process.env.CHAPA_CALLBACK_URL,
+      customization: {
+        title: 'Campus Eats Payment',
+        description: `Payment for ${payment.type.toLowerCase()}`
+      }
     });
 
-    if (!chapaResponse.success) {
-      return res.status(400).json({
-        success: false,
-        message: chapaResponse.message || 'Failed to initialize payment'
-      });
-    }
+    // Update payment with Chapa reference
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        chapaReference: chapaResponse.data.tx_ref,
+        metadata: chapaResponse.data
+      }
+    });
 
     res.status(200).json({
       success: true,
-      message: 'Payment initialized successfully',
       data: {
-        checkoutUrl: chapaResponse.data.data.checkout_url,
-        reference
+        checkout_url: chapaResponse.data.checkout_url
       }
     });
   } catch (error) {
@@ -80,151 +81,51 @@ router.post('/initialize', auth, async (req, res) => {
 });
 
 // @route   POST /api/v1/payments/webhook
-// @desc    Chapa webhook for payment confirmation
-// @access  Public (but verified)
+// @desc    Chapa payment webhook
+// @access  Public
 router.post('/webhook', async (req, res) => {
   try {
-    const { tx_ref, status, transaction_id } = req.body;
+    const { tx_ref, status } = req.body;
 
     logger.info('Chapa webhook received:', req.body);
 
-    // Find payment by reference
-    const payment = await Payment.findOne({ chapaReference: tx_ref });
+    const payment = await prisma.payment.findFirst({
+      where: { chapaReference: tx_ref }
+    });
 
     if (!payment) {
-      logger.warn('Payment not found for reference:', tx_ref);
       return res.status(404).json({
         success: false,
         message: 'Payment not found'
       });
     }
 
-    if (payment.status === 'completed') {
-      logger.info('Payment already completed:', tx_ref);
-      return res.status(200).json({
-        success: true,
-        message: 'Payment already processed'
+    if (status === 'success') {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'COMPLETED',
+          chapaTransactionId: req.body.trx_ref
+        }
+      });
+
+      // If it's a contract payment, activate the contract
+      if (payment.contractId) {
+        await prisma.contract.update({
+          where: { id: payment.contractId },
+          data: { isActive: true }
+        });
+      }
+    } else {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'FAILED' }
       });
     }
 
-    // Verify payment with Chapa
-    const verification = await chapaService.verifyPayment(tx_ref);
-
-    if (!verification.success || verification.data.status !== 'success') {
-      payment.status = 'failed';
-      await payment.save();
-      return res.status(400).json({
-        success: false,
-        message: 'Payment verification failed'
-      });
-    }
-
-    // Update payment status
-    payment.status = 'completed';
-    payment.chapaTransactionId = transaction_id;
-    payment.metadata = verification.data;
-    await payment.save();
-
-    // Process based on payment type
-    if (payment.type === 'contract') {
-      // Activate contract
-      const contract = await Contract.findById(payment.contractId);
-      if (contract) {
-        contract.isActive = true;
-        await contract.save();
-      }
-    } else if (payment.type === 'order') {
-      // Update order status
-      const order = await Order.findById(payment.orderId);
-      if (order) {
-        order.status = 'preparing';
-        await order.save();
-      }
-    }
-
-    logger.info('Payment processed successfully:', tx_ref);
-
-    res.status(200).json({
-      success: true,
-      message: 'Payment processed successfully'
-    });
+    res.status(200).json({ success: true });
   } catch (error) {
     logger.error('Webhook error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-// @route   GET /api/v1/payments/:id/verify
-// @desc    Verify payment status
-// @access  Private
-router.get('/:id/verify', auth, async (req, res) => {
-  try {
-    const payment = await Payment.findById(req.params.id);
-
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: 'Payment not found'
-      });
-    }
-
-    // Check ownership
-    if (payment.userId.toString() !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Not authorized'
-      });
-    }
-
-    // If payment already completed, return status
-    if (payment.status === 'completed') {
-      return res.status(200).json({
-        success: true,
-        data: {
-          status: 'completed',
-          payment
-        }
-      });
-    }
-
-    // Verify with Chapa
-    if (payment.chapaReference) {
-      const verification = await chapaService.verifyPayment(payment.chapaReference);
-
-      if (verification.success && verification.data.status === 'success') {
-        payment.status = 'completed';
-        payment.metadata = verification.data;
-        await payment.save();
-
-        // Process based on payment type
-        if (payment.type === 'contract') {
-          const contract = await Contract.findById(payment.contractId);
-          if (contract) {
-            contract.isActive = true;
-            await contract.save();
-          }
-        } else if (payment.type === 'order') {
-          const order = await Order.findById(payment.orderId);
-          if (order) {
-            order.status = 'preparing';
-            await order.save();
-          }
-        }
-      }
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        status: payment.status,
-        payment
-      }
-    });
-  } catch (error) {
-    logger.error('Verify payment error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -239,18 +140,22 @@ router.get('/', auth, async (req, res) => {
   try {
     const { type, status, page = 1, limit = 10 } = req.query;
 
-    const query = { userId: req.user.id };
-    if (type) query.type = type;
-    if (status) query.status = status;
+    const where = { userId: req.user.id };
+    if (type) where.type = type.toUpperCase();
+    if (status) where.status = status.toUpperCase();
 
-    const payments = await Payment.find(query)
-      .populate('orderId', 'status totalPrice')
-      .populate('contractId', 'loungeId remainingBalance')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const total = await Payment.countDocuments(query);
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.payment.count({ where })
+    ]);
 
     res.status(200).json({
       success: true,
@@ -258,11 +163,47 @@ router.get('/', auth, async (req, res) => {
       pagination: {
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / take)
       }
     });
   } catch (error) {
     logger.error('Get payments error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @route   GET /api/v1/payments/:id
+// @desc    Get payment by ID
+// @access  Private
+router.get('/:id', auth, async (req, res) => {
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found'
+      });
+    }
+
+    if (payment.userId !== req.user.id && req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: payment
+    });
+  } catch (error) {
+    logger.error('Get payment error:', error);
     res.status(500).json({
       success: false,
       message: error.message

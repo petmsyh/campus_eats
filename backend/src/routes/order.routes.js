@@ -1,12 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { auth, authorize } = require('../middleware/auth');
-const Order = require('../models/Order');
-const Food = require('../models/Food');
-const Contract = require('../models/Contract');
-const User = require('../models/User');
-const Payment = require('../models/Payment');
-const Commission = require('../models/Commission');
+const { prisma } = require('../config/prisma');
 const { generateQRData, generateQRCode, verifyQRCode } = require('../utils/qrcode');
 const notificationService = require('../services/notification.service');
 const logger = require('../utils/logger');
@@ -31,7 +26,10 @@ router.post('/', auth, async (req, res) => {
     const orderItems = [];
 
     for (const item of items) {
-      const food = await Food.findById(item.foodId);
+      const food = await prisma.food.findUnique({
+        where: { id: item.foodId }
+      });
+
       if (!food) {
         return res.status(404).json({
           success: false,
@@ -50,7 +48,7 @@ router.post('/', auth, async (req, res) => {
       totalPrice += subtotal;
 
       orderItems.push({
-        foodId: food._id,
+        foodId: food.id,
         name: food.name,
         quantity: item.quantity,
         price: food.price,
@@ -67,12 +65,14 @@ router.post('/', auth, async (req, res) => {
     let payment;
     if (paymentMethod === 'contract') {
       // Validate contract
-      const contract = await Contract.findOne({
-        _id: contractId,
-        userId: req.user.id,
-        loungeId,
-        isActive: true,
-        isExpired: false
+      const contract = await prisma.contract.findFirst({
+        where: {
+          id: contractId,
+          userId: req.user.id,
+          loungeId,
+          isActive: true,
+          isExpired: false
+        }
       });
 
       if (!contract) {
@@ -89,32 +89,43 @@ router.post('/', auth, async (req, res) => {
         });
       }
 
-      // Deduct from contract
-      contract.remainingBalance -= totalPrice;
-      await contract.save();
+      // Deduct from contract and create payment in a transaction
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.contract.update({
+          where: { id: contract.id },
+          data: {
+            remainingBalance: contract.remainingBalance - totalPrice
+          }
+        });
 
-      // Create payment record
-      payment = new Payment({
-        userId: req.user.id,
-        amount: totalPrice,
-        type: 'order',
-        method: 'contract-wallet',
-        status: 'completed',
-        contractId: contract._id,
-        commission
+        const payment = await tx.payment.create({
+          data: {
+            userId: req.user.id,
+            amount: totalPrice,
+            type: 'ORDER',
+            method: 'contract-wallet',
+            status: 'COMPLETED',
+            contractId: contract.id,
+            commission
+          }
+        });
+
+        return payment;
       });
-      await payment.save();
+
+      payment = result;
     } else if (paymentMethod === 'chapa') {
       // Payment will be handled separately via Chapa
-      payment = new Payment({
-        userId: req.user.id,
-        amount: totalPrice,
-        type: 'order',
-        method: 'chapa',
-        status: 'pending',
-        commission
+      payment = await prisma.payment.create({
+        data: {
+          userId: req.user.id,
+          amount: totalPrice,
+          type: 'ORDER',
+          method: 'chapa',
+          status: 'PENDING',
+          commission
+        }
       });
-      await payment.save();
     } else {
       return res.status(400).json({
         success: false,
@@ -122,55 +133,82 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
-    // Create order
-    const order = new Order({
+    // Create order with items
+    const orderData = {
       userId: req.user.id,
       loungeId,
-      items: orderItems,
       totalPrice,
-      paymentMethod,
-      paymentId: payment._id,
-      contractId: paymentMethod === 'contract' ? contractId : undefined,
-      commission
+      paymentMethod: paymentMethod.toUpperCase(),
+      paymentId: payment.id,
+      contractId: paymentMethod === 'contract' ? contractId : null,
+      commission,
+      items: {
+        create: orderItems.map(item => ({
+          foodId: item.foodId,
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          subtotal: item.subtotal,
+          estimatedTime: item.estimatedTime
+        }))
+      }
+    };
+
+    const order = await prisma.order.create({
+      data: orderData,
+      include: {
+        items: true,
+        lounge: { select: { name: true, logo: true } }
+      }
     });
 
     // Generate QR code
-    const qrData = generateQRData(order._id);
-    order.qrCode = qrData;
-    order.qrCodeImage = await generateQRCode(qrData);
+    const qrData = generateQRData(order.id);
+    const qrCodeImage = await generateQRCode(qrData);
 
-    await order.save();
+    // Update order with QR code
+    const updatedOrder = await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        qrCode: qrData,
+        qrCodeImage
+      },
+      include: {
+        items: true,
+        lounge: { select: { name: true, logo: true } }
+      }
+    });
 
-    // Link payment to order
-    payment.orderId = order._id;
-    await payment.save();
+    // Update payment with orderId
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { orderId: order.id }
+    });
 
     // Create commission record
-    const commissionRecord = new Commission({
-      orderId: order._id,
-      loungeId,
-      amount: commission,
-      rate: commissionRate,
-      orderAmount: totalPrice
+    await prisma.commission.create({
+      data: {
+        orderId: order.id,
+        loungeId,
+        amount: commission,
+        rate: commissionRate,
+        orderAmount: totalPrice
+      }
     });
-    await commissionRecord.save();
 
     // Send notification to user
     if (req.user.fcmToken) {
-      const notification = notificationService.orderStatusNotification('preparing', order._id);
+      const notification = notificationService.orderStatusNotification('preparing', order.id);
       await notificationService.sendNotification(req.user.fcmToken, notification, {
-        orderId: order._id.toString(),
+        orderId: order.id,
         type: 'order_status'
       });
     }
 
-    // Populate order details
-    await order.populate('loungeId', 'name logo');
-
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
-      data: order
+      data: updatedOrder
     });
   } catch (error) {
     logger.error('Create order error:', error);
@@ -188,28 +226,38 @@ router.get('/', auth, async (req, res) => {
   try {
     const { status, page = 1, limit = 10 } = req.query;
 
-    let query = {};
+    let where = {};
 
-    if (req.user.role === 'user') {
-      query.userId = req.user.id;
-    } else if (req.user.role === 'lounge') {
+    if (req.user.role === 'USER') {
+      where.userId = req.user.id;
+    } else if (req.user.role === 'LOUNGE') {
       // Find lounges owned by this user
-      const Lounge = require('../models/Lounge');
-      const lounges = await Lounge.find({ ownerId: req.user.id });
-      const loungeIds = lounges.map(l => l._id);
-      query.loungeId = { $in: loungeIds };
+      const lounges = await prisma.lounge.findMany({
+        where: { ownerId: req.user.id },
+        select: { id: true }
+      });
+      const loungeIds = lounges.map(l => l.id);
+      where.loungeId = { in: loungeIds };
     }
 
-    if (status) query.status = status;
+    if (status) where.status = status.toUpperCase();
 
-    const orders = await Order.find(query)
-      .populate('userId', 'name phone')
-      .populate('loungeId', 'name logo')
-      .sort('-createdAt')
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const total = await Order.countDocuments(query);
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        include: {
+          user: { select: { name: true, phone: true } },
+          lounge: { select: { name: true, logo: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.order.count({ where })
+    ]);
 
     res.status(200).json({
       success: true,
@@ -217,7 +265,7 @@ router.get('/', auth, async (req, res) => {
       pagination: {
         total,
         page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        pages: Math.ceil(total / take)
       }
     });
   } catch (error) {
@@ -234,10 +282,18 @@ router.get('/', auth, async (req, res) => {
 // @access  Private
 router.get('/:id', auth, async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id)
-      .populate('userId', 'name phone')
-      .populate('loungeId', 'name logo operatingHours')
-      .populate('items.foodId');
+    const order = await prisma.order.findUnique({
+      where: { id: req.params.id },
+      include: {
+        user: { select: { name: true, phone: true } },
+        lounge: { select: { name: true, logo: true, opening: true, closing: true } },
+        items: {
+          include: {
+            food: true
+          }
+        }
+      }
+    });
 
     if (!order) {
       return res.status(404).json({
@@ -247,13 +303,14 @@ router.get('/:id', auth, async (req, res) => {
     }
 
     // Check authorization
-    const Lounge = require('../models/Lounge');
-    const lounge = await Lounge.findById(order.loungeId);
+    const lounge = await prisma.lounge.findUnique({
+      where: { id: order.loungeId }
+    });
     
     if (
-      req.user.role !== 'admin' &&
-      order.userId.toString() !== req.user.id &&
-      (!lounge || lounge.ownerId.toString() !== req.user.id)
+      req.user.role !== 'ADMIN' &&
+      order.userId !== req.user.id &&
+      (!lounge || lounge.ownerId !== req.user.id)
     ) {
       return res.status(403).json({
         success: false,
@@ -277,19 +334,24 @@ router.get('/:id', auth, async (req, res) => {
 // @route   PUT /api/v1/orders/:id/status
 // @desc    Update order status
 // @access  Private (Lounge owner)
-router.put('/:id/status', auth, authorize('lounge', 'admin'), async (req, res) => {
+router.put('/:id/status', auth, authorize('LOUNGE', 'ADMIN'), async (req, res) => {
   try {
     const { status } = req.body;
 
-    const validStatuses = ['pending', 'preparing', 'ready', 'delivered', 'cancelled'];
-    if (!validStatuses.includes(status)) {
+    const validStatuses = ['PENDING', 'PREPARING', 'READY', 'DELIVERED', 'CANCELLED'];
+    const statusUpper = status.toUpperCase();
+    
+    if (!validStatuses.includes(statusUpper)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid status'
       });
     }
 
-    const order = await Order.findById(req.params.id).populate('loungeId');
+    const order = await prisma.order.findUnique({
+      where: { id: req.params.id },
+      include: { lounge: true }
+    });
 
     if (!order) {
       return res.status(404).json({
@@ -299,36 +361,41 @@ router.put('/:id/status', auth, authorize('lounge', 'admin'), async (req, res) =
     }
 
     // Check authorization
-    if (req.user.role !== 'admin' && order.loungeId.ownerId.toString() !== req.user.id) {
+    if (req.user.role !== 'ADMIN' && order.lounge.ownerId !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update this order'
       });
     }
 
-    order.status = status;
-
-    if (status === 'delivered') {
-      order.deliveredAt = new Date();
+    const updateData = { status: statusUpper };
+    if (statusUpper === 'DELIVERED') {
+      updateData.deliveredAt = new Date();
     }
 
-    await order.save();
+    const updatedOrder = await prisma.order.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
 
     // Send notification to user
-    const user = await User.findById(order.userId);
+    const user = await prisma.user.findUnique({
+      where: { id: order.userId }
+    });
+    
     if (user && user.fcmToken) {
-      const notification = notificationService.orderStatusNotification(status, order._id);
+      const notification = notificationService.orderStatusNotification(status, order.id);
       await notificationService.sendNotification(user.fcmToken, notification, {
-        orderId: order._id.toString(),
+        orderId: order.id,
         type: 'order_status',
-        status
+        status: statusUpper
       });
     }
 
     res.status(200).json({
       success: true,
       message: 'Order status updated successfully',
-      data: order
+      data: updatedOrder
     });
   } catch (error) {
     logger.error('Update order status error:', error);
@@ -342,7 +409,7 @@ router.put('/:id/status', auth, authorize('lounge', 'admin'), async (req, res) =
 // @route   POST /api/v1/orders/verify-qr
 // @desc    Verify QR code and mark order as delivered
 // @access  Private (Lounge owner)
-router.post('/verify-qr', auth, authorize('lounge', 'admin'), async (req, res) => {
+router.post('/verify-qr', auth, authorize('LOUNGE', 'ADMIN'), async (req, res) => {
   try {
     const { qrCode } = req.body;
 
@@ -356,7 +423,13 @@ router.post('/verify-qr', auth, authorize('lounge', 'admin'), async (req, res) =
     }
 
     // Find order
-    const order = await Order.findOne({ qrCode }).populate('loungeId userId');
+    const order = await prisma.order.findFirst({
+      where: { qrCode },
+      include: {
+        lounge: true,
+        user: true
+      }
+    });
 
     if (!order) {
       return res.status(404).json({
@@ -366,14 +439,14 @@ router.post('/verify-qr', auth, authorize('lounge', 'admin'), async (req, res) =
     }
 
     // Check authorization
-    if (req.user.role !== 'admin' && order.loungeId.ownerId.toString() !== req.user.id) {
+    if (req.user.role !== 'ADMIN' && order.lounge.ownerId !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to verify this order'
       });
     }
 
-    if (order.status === 'delivered') {
+    if (order.status === 'DELIVERED') {
       return res.status(400).json({
         success: false,
         message: 'Order already delivered'
@@ -381,15 +454,19 @@ router.post('/verify-qr', auth, authorize('lounge', 'admin'), async (req, res) =
     }
 
     // Update order status
-    order.status = 'delivered';
-    order.deliveredAt = new Date();
-    await order.save();
+    const updatedOrder = await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: 'DELIVERED',
+        deliveredAt: new Date()
+      }
+    });
 
     // Send notification to user
-    if (order.userId.fcmToken) {
-      const notification = notificationService.orderStatusNotification('delivered', order._id);
-      await notificationService.sendNotification(order.userId.fcmToken, notification, {
-        orderId: order._id.toString(),
+    if (order.user.fcmToken) {
+      const notification = notificationService.orderStatusNotification('delivered', order.id);
+      await notificationService.sendNotification(order.user.fcmToken, notification, {
+        orderId: order.id,
         type: 'order_status',
         status: 'delivered'
       });
@@ -398,7 +475,7 @@ router.post('/verify-qr', auth, authorize('lounge', 'admin'), async (req, res) =
     res.status(200).json({
       success: true,
       message: 'Order verified and marked as delivered',
-      data: order
+      data: updatedOrder
     });
   } catch (error) {
     logger.error('Verify QR error:', error);
