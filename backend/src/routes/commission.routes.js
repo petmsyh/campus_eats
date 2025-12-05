@@ -126,10 +126,11 @@ router.put('/:id/status', auth, authorize('ADMIN'), async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!['PAID', 'CANCELLED'].includes(status.toUpperCase())) {
+    const validStatuses = ['PENDING', 'PAID', 'CANCELLED'];
+    if (!validStatuses.includes(status.toUpperCase())) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status'
+        message: 'Invalid status. Must be one of: PENDING, PAID, CANCELLED'
       });
     }
 

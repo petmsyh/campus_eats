@@ -384,7 +384,7 @@ router.put('/:id/status', auth, authorize('LOUNGE', 'ADMIN'), async (req, res) =
     });
     
     if (user && user.fcmToken) {
-      const notification = notificationService.orderStatusNotification(status, order.id);
+      const notification = notificationService.orderStatusNotification(statusUpper, order.id);
       await notificationService.sendNotification(user.fcmToken, notification, {
         orderId: order.id,
         type: 'order_status',
@@ -464,11 +464,11 @@ router.post('/verify-qr', auth, authorize('LOUNGE', 'ADMIN'), async (req, res) =
 
     // Send notification to user
     if (order.user.fcmToken) {
-      const notification = notificationService.orderStatusNotification('delivered', order.id);
+      const notification = notificationService.orderStatusNotification('DELIVERED', order.id);
       await notificationService.sendNotification(order.user.fcmToken, notification, {
         orderId: order.id,
         type: 'order_status',
-        status: 'delivered'
+        status: 'DELIVERED'
       });
     }
 

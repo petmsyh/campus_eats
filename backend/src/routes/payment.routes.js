@@ -44,7 +44,7 @@ router.post('/initialize', auth, async (req, res) => {
     // Initialize Chapa payment
     const chapaResponse = await chapaService.initializePayment({
       amount: payment.amount,
-      email: user.email || `${user.phone}@example.com`,
+      email: user.email || `${user.phone}@campuseats.et`,
       first_name: user.name.split(' ')[0],
       last_name: user.name.split(' ').slice(1).join(' ') || user.name,
       tx_ref: payment.id,
@@ -85,7 +85,7 @@ router.post('/initialize', auth, async (req, res) => {
 // @access  Public
 router.post('/webhook', async (req, res) => {
   try {
-    const { tx_ref, status } = req.body;
+    const { tx_ref, status, transaction_id } = req.body;
 
     logger.info('Chapa webhook received:', req.body);
 
@@ -105,7 +105,7 @@ router.post('/webhook', async (req, res) => {
         where: { id: payment.id },
         data: {
           status: 'COMPLETED',
-          chapaTransactionId: req.body.trx_ref
+          chapaTransactionId: transaction_id
         }
       });
 
