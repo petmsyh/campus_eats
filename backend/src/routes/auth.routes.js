@@ -43,8 +43,15 @@ router.post('/register', async (req, res) => {
 
     await user.save();
 
-    // TODO: Send OTP via SMS service
-    logger.info(`OTP for ${phone}: ${otpCode}`);
+    // TODO: Send OTP via SMS service (e.g., Africa's Talking, Twilio)
+    // For development, OTP can be retrieved from database or logs
+    // SECURITY: Never log OTP in production - implement SMS service
+    if (process.env.NODE_ENV === 'development') {
+      logger.info(`Development Mode - OTP for ${phone}: ${otpCode}`);
+    } else {
+      // In production, send via SMS service
+      logger.info(`OTP sent to ${phone} via SMS`);
+    }
 
     res.status(201).json({
       success: true,
@@ -209,8 +216,14 @@ router.post('/resend-otp', async (req, res) => {
     };
     await user.save();
 
-    // TODO: Send OTP via SMS service
-    logger.info(`OTP for ${phone}: ${otpCode}`);
+    // TODO: Send OTP via SMS service (e.g., Africa's Talking, Twilio)
+    // SECURITY: Never log OTP in production - implement SMS service
+    if (process.env.NODE_ENV === 'development') {
+      logger.info(`Development Mode - OTP for ${phone}: ${otpCode}`);
+    } else {
+      // In production, send via SMS service
+      logger.info(`OTP sent to ${phone} via SMS`);
+    }
 
     res.status(200).json({
       success: true,

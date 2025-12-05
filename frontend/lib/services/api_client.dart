@@ -34,7 +34,10 @@ class ApiClient {
         onError: (DioException e, handler) {
           // Handle errors
           if (e.response?.statusCode == 401) {
-            // Token expired, handle refresh or logout
+            // Token expired - clear stored token
+            clearAccessToken();
+            // TODO: Implement navigation to login screen
+            // This should be handled by the app's navigation service
           }
           return handler.next(e);
         },
@@ -47,9 +50,12 @@ class ApiClient {
         requestBody: true,
         responseBody: true,
         logPrint: (obj) {
-          // Only log in debug mode
+          // Only log in debug mode using assert
+          // In production, this will be optimized away
           assert(() {
-            print(obj);
+            // Use logger package for structured logging
+            // logger.d(obj);
+            print(obj); // Temporary - replace with logger
             return true;
           }());
         },
