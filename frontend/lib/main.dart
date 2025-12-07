@@ -5,6 +5,7 @@ import 'config/app_theme.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
 import 'screens/auth/login_screen.dart';
+import 'screens/auth/register_screen.dart';
 import 'screens/home/home_screen.dart';
 
 void main() async {
@@ -40,6 +41,7 @@ class CampusEatsApp extends StatelessWidget {
       routes: {
         '/': (context) => const SplashScreen(),
         '/login': (context) => LoginScreen(authService: authService),
+        '/register': (context) => RegisterScreen(authService: authService),
         '/home': (context) => const HomeScreen(),
       },
     );
