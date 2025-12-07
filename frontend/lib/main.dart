@@ -4,6 +4,9 @@ import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
+import 'screens/auth/login_screen.dart';
+import 'screens/auth/register_screen.dart';
+import 'screens/home/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,14 +37,42 @@ class CampusEatsApp extends StatelessWidget {
       title: AppConfig.appName,
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
-      home: const SplashScreen(),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const SplashScreen(),
+        '/login': (context) => LoginScreen(authService: authService),
+        '/register': (context) => RegisterScreen(authService: authService),
+        '/home': (context) => const HomeScreen(),
+      },
     );
   }
 }
 
-// Placeholder Splash Screen
-class SplashScreen extends StatelessWidget {
+// Splash Screen with navigation logic
+class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _navigateToNext();
+  }
+
+  Future<void> _navigateToNext() async {
+    // Wait for 2 seconds
+    await Future.delayed(const Duration(seconds: 2));
+
+    // TODO: Check if user is logged in
+    // For now, navigate to login
+    if (mounted) {
+      Navigator.of(context).pushReplacementNamed('/login');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
