@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import '../../models/lounge.dart';
+import '../order/orders_screen.dart';
+import '../order/cart_screen.dart';
+import '../lounge/lounge_details_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -85,9 +88,9 @@ class _HomeScreenState extends State<HomeScreen> {
       case 0:
         return _buildHomeTab();
       case 1:
-        return _buildOrdersTab();
+        return const OrdersScreen();
       case 2:
-        return _buildCartTab();
+        return const CartScreen();
       case 3:
         return _buildProfileTab();
       default:
@@ -185,7 +188,12 @@ class _HomeScreenState extends State<HomeScreen> {
       margin: const EdgeInsets.only(bottom: 16),
       child: InkWell(
         onTap: () {
-          // TODO: Navigate to lounge details
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LoungeDetailsScreen(lounge: lounge),
+            ),
+          );
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
@@ -249,17 +257,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildOrdersTab() {
-    return const Center(
-      child: Text('Orders Screen - To be implemented'),
-    );
-  }
-
-  Widget _buildCartTab() {
-    return const Center(
-      child: Text('Cart Screen - To be implemented'),
-    );
-  }
+  // Remove the old placeholder tabs
+  // Widget _buildOrdersTab() and _buildCartTab() are no longer needed
 
   Widget _buildProfileTab() {
     return ListView(
