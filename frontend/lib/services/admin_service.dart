@@ -118,4 +118,58 @@ class AdminService {
     );
     return response;
   }
+
+  // Orders Management
+  Future<Map<String, dynamic>> getOrders({
+    String? status,
+    String? loungeId,
+    int page = 1,
+    int limit = 10,
+  }) async {
+    final queryParams = {
+      'page': page.toString(),
+      'limit': limit.toString(),
+    };
+    if (status != null) queryParams['status'] = status;
+    if (loungeId != null) queryParams['loungeId'] = loungeId;
+
+    final response = await apiClient.get('/admin/orders', queryParams: queryParams);
+    return response;
+  }
+
+  // Commissions Management
+  Future<Map<String, dynamic>> getCommissions({
+    String? loungeId,
+    String? status,
+    int page = 1,
+    int limit = 10,
+  }) async {
+    final queryParams = {
+      'page': page.toString(),
+      'limit': limit.toString(),
+    };
+    if (loungeId != null) queryParams['loungeId'] = loungeId;
+    if (status != null) queryParams['status'] = status;
+
+    final response = await apiClient.get('/admin/commissions', queryParams: queryParams);
+    return response;
+  }
+
+  // Payments Management
+  Future<Map<String, dynamic>> getPayments({
+    String? type,
+    String? status,
+    int page = 1,
+    int limit = 10,
+  }) async {
+    final queryParams = {
+      'page': page.toString(),
+      'limit': limit.toString(),
+    };
+    if (type != null) queryParams['type'] = type;
+    if (status != null) queryParams['status'] = status;
+
+    final response = await apiClient.get('/admin/payments', queryParams: queryParams);
+    return response;
+  }
 }

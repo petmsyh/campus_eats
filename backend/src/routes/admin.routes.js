@@ -336,4 +336,141 @@ router.get('/campuses', auth, authorize('ADMIN'), async (req, res) => {
   }
 });
 
+// @route   GET /api/v1/admin/orders
+// @desc    Get all orders (admin overview)
+// @access  Private (Admin)
+router.get('/orders', auth, authorize('ADMIN'), async (req, res) => {
+  try {
+    const { status, loungeId, page = 1, limit = 10 } = req.query;
+
+    const where = {};
+    if (status) where.status = status.toUpperCase();
+    if (loungeId) where.loungeId = loungeId;
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        include: {
+          user: { select: { name: true, phone: true } },
+          lounge: { select: { name: true, logo: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.order.count({ where })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: orders,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / take)
+      }
+    });
+  } catch (error) {
+    logger.error('Get admin orders error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @route   GET /api/v1/admin/commissions
+// @desc    Get all commissions (admin overview)
+// @access  Private (Admin)
+router.get('/commissions', auth, authorize('ADMIN'), async (req, res) => {
+  try {
+    const { loungeId, status, page = 1, limit = 10 } = req.query;
+
+    const where = {};
+    if (loungeId) where.loungeId = loungeId;
+    if (status) where.status = status.toUpperCase();
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    const [commissions, total] = await Promise.all([
+      prisma.commission.findMany({
+        where,
+        include: {
+          lounge: { select: { name: true } },
+          order: { select: { id: true, createdAt: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.commission.count({ where })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: commissions,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / take)
+      }
+    });
+  } catch (error) {
+    logger.error('Get admin commissions error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// @route   GET /api/v1/admin/payments
+// @desc    Get all payments (admin overview)
+// @access  Private (Admin)
+router.get('/payments', auth, authorize('ADMIN'), async (req, res) => {
+  try {
+    const { type, status, page = 1, limit = 10 } = req.query;
+
+    const where = {};
+    if (type) where.type = type.toUpperCase();
+    if (status) where.status = status.toUpperCase();
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    const [payments, total] = await Promise.all([
+      prisma.payment.findMany({
+        where,
+        include: {
+          user: { select: { name: true, phone: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take
+      }),
+      prisma.payment.count({ where })
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: payments,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / take)
+      }
+    });
+  } catch (error) {
+    logger.error('Get admin payments error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;
