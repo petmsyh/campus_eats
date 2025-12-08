@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
 import '../../config/app_theme.dart';
 import '../../services/auth_service.dart';
+import '../../services/api_client.dart';
+import '../../services/admin_service.dart';
+import '../../services/lounge_service.dart';
 
 class LoginScreen extends StatefulWidget {
   final AuthService authService;
+  final ApiClient apiClient;
+  final AdminService adminService;
+  final LoungeService loungeService;
 
   const LoginScreen({
     Key? key,
     required this.authService,
+    required this.apiClient,
+    required this.adminService,
+    required this.loungeService,
   }) : super(key: key);
 
   @override
@@ -41,8 +50,37 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (mounted) {
         if (response['success']) {
-          // Navigate to home screen
-          Navigator.of(context).pushReplacementNamed('/home');
+          final userData = response['data']['user'];
+          final role = userData['role'] as String;
+          
+          // Route based on user role
+          if (role == 'ADMIN') {
+            Navigator.of(context).pushReplacementNamed('/admin-dashboard');
+          } else if (role == 'LOUNGE') {
+            // Get the lounge ID for this user
+            try {
+              final loungesResponse = await widget.apiClient.get('/lounges');
+              final lounges = loungesResponse['data'] as List;
+              final userLounge = lounges.firstWhere(
+                (l) => l['ownerId'] == userData['id'],
+                orElse: () => null,
+              );
+              
+              if (userLounge != null) {
+                Navigator.of(context).pushReplacementNamed(
+                  '/lounge-dashboard',
+                  arguments: {'loungeId': userLounge['id']},
+                );
+              } else {
+                _showError('No lounge found for this account');
+              }
+            } catch (e) {
+              _showError('Error fetching lounge information');
+            }
+          } else {
+            // Regular user
+            Navigator.of(context).pushReplacementNamed('/home');
+          }
         } else {
           _showError(response['message'] ?? 'Login failed');
         }

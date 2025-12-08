@@ -4,9 +4,13 @@ import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
+import 'services/admin_service.dart';
+import 'services/lounge_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/home/home_screen.dart';
+import 'screens/admin/admin_dashboard_screen.dart';
+import 'screens/lounge_owner/lounge_dashboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,21 +18,29 @@ void main() async {
   // Initialize services
   final apiClient = ApiClient();
   final authService = AuthService(apiClient);
+  final adminService = AdminService(apiClient);
+  final loungeService = LoungeService(apiClient);
 
   runApp(CampusEatsApp(
     apiClient: apiClient,
     authService: authService,
+    adminService: adminService,
+    loungeService: loungeService,
   ));
 }
 
 class CampusEatsApp extends StatelessWidget {
   final ApiClient apiClient;
   final AuthService authService;
+  final AdminService adminService;
+  final LoungeService loungeService;
 
   const CampusEatsApp({
     Key? key,
     required this.apiClient,
     required this.authService,
+    required this.adminService,
+    required this.loungeService,
   }) : super(key: key);
 
   @override
@@ -38,11 +50,48 @@ class CampusEatsApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       initialRoute: '/',
-      routes: {
-        '/': (context) => const SplashScreen(),
-        '/login': (context) => LoginScreen(authService: authService),
-        '/register': (context) => RegisterScreen(authService: authService),
-        '/home': (context) => const HomeScreen(),
+      onGenerateRoute: (settings) {
+        switch (settings.name) {
+          case '/':
+            return MaterialPageRoute(
+              builder: (context) => const SplashScreen(),
+            );
+          case '/login':
+            return MaterialPageRoute(
+              builder: (context) => LoginScreen(
+                authService: authService,
+                apiClient: apiClient,
+                adminService: adminService,
+                loungeService: loungeService,
+              ),
+            );
+          case '/register':
+            return MaterialPageRoute(
+              builder: (context) => RegisterScreen(authService: authService),
+            );
+          case '/home':
+            return MaterialPageRoute(
+              builder: (context) => const HomeScreen(),
+            );
+          case '/admin-dashboard':
+            return MaterialPageRoute(
+              builder: (context) => AdminDashboardScreen(
+                adminService: adminService,
+              ),
+            );
+          case '/lounge-dashboard':
+            final args = settings.arguments as Map<String, dynamic>?;
+            return MaterialPageRoute(
+              builder: (context) => LoungeDashboardScreen(
+                loungeService: loungeService,
+                loungeId: args?['loungeId'] ?? '',
+              ),
+            );
+          default:
+            return MaterialPageRoute(
+              builder: (context) => const SplashScreen(),
+            );
+        }
       },
     );
   }
