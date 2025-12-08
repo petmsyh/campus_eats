@@ -72,74 +72,78 @@ class ApiClient {
   }
 
   // Generic GET request
-  Future<Response> get(
+  Future<Map<String, dynamic>> get(
     String path, {
     Map<String, dynamic>? queryParameters,
     Options? options,
   }) async {
     try {
-      return await dio.get(
+      final response = await dio.get(
         path,
         queryParameters: queryParameters,
         options: options,
       );
+      return response.data as Map<String, dynamic>;
     } catch (e) {
       rethrow;
     }
   }
 
   // Generic POST request
-  Future<Response> post(
+  Future<Map<String, dynamic>> post(
     String path, {
     dynamic data,
     Map<String, dynamic>? queryParameters,
     Options? options,
   }) async {
     try {
-      return await dio.post(
+      final response = await dio.post(
         path,
         data: data,
         queryParameters: queryParameters,
         options: options,
       );
+      return response.data as Map<String, dynamic>;
     } catch (e) {
       rethrow;
     }
   }
 
   // Generic PUT request
-  Future<Response> put(
+  Future<Map<String, dynamic>> put(
     String path, {
     dynamic data,
     Map<String, dynamic>? queryParameters,
     Options? options,
   }) async {
     try {
-      return await dio.put(
+      final response = await dio.put(
         path,
         data: data,
         queryParameters: queryParameters,
         options: options,
       );
+      return response.data as Map<String, dynamic>;
     } catch (e) {
       rethrow;
     }
   }
 
   // Generic DELETE request
-  Future<Response> delete(
+  Future<Map<String, dynamic>> delete(
     String path, {
     dynamic data,
     Map<String, dynamic>? queryParameters,
     Options? options,
   }) async {
     try {
-      return await dio.delete(
+      final response = await dio.delete(
         path,
         data: data,
         queryParameters: queryParameters,
         options: options,
       );
+      return response.data as Map<String, dynamic>;
     } catch (e) {
       rethrow;
     }
