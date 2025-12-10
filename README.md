@@ -1169,8 +1169,9 @@ flutter test
 ### Backend Deployment
 - Deploy to Heroku, AWS, DigitalOcean, Railway, or any Node.js host
 - Set up PostgreSQL database (recommended: managed service like AWS RDS, DigitalOcean Managed Databases, or Railway PostgreSQL)
-- Run database migrations: `npm run prisma:migrate`
 - Configure environment variables (DATABASE_URL, JWT_SECRET, etc.)
+- **Run database migrations**: `npx prisma migrate deploy` (production)
+- Generate Prisma Client: `npx prisma generate`
 - Set up Chapa webhook URL
 - Configure CORS for frontend domain
 
@@ -1178,6 +1179,8 @@ flutter test
 - PostgreSQL 12 or higher required
 - Prisma ORM handles migrations
 - Connection string format: `postgresql://username:password@host:5432/database`
+- **Important**: Use `npx prisma migrate deploy` in production (applies existing migrations)
+- Use `npm run prisma:migrate` only in development (creates new migrations)
 
 ### Mobile App Deployment
 - Build APK for Android: `flutter build apk`
