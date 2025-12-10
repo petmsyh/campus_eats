@@ -66,8 +66,14 @@ npm install
 cp .env.example .env
 # Configure your .env file with PostgreSQL connection
 # DATABASE_URL=postgresql://username:password@localhost:5432/campus_eats
+
+# Development: Create and apply migrations
 npm run prisma:migrate
+
+# Generate Prisma Client
 npm run prisma:generate
+
+# Start development server
 npm run dev
 ```
 
@@ -609,11 +615,12 @@ The application uses PostgreSQL with Prisma ORM. Key database models include:
 ### Migrations
 Database migrations are managed by Prisma:
 ```bash
-# Create and apply new migration (development)
+# Development: Create and apply new migration
 npm run prisma:migrate
+# This runs: prisma migrate dev
 
-# Apply existing migrations (production)
-npm run prisma:migrate deploy
+# Production: Apply existing migrations only
+npx prisma migrate deploy
 
 # Generate Prisma Client after schema changes
 npm run prisma:generate
