@@ -85,36 +85,33 @@ See [Frontend README](./frontend/README.md) for detailed instructions.
 
 #### Docker Setup (Optional)
 
-The project includes a Docker Compose configuration for easy setup, but note that it currently references MongoDB. To use PostgreSQL instead:
+The project includes a Docker Compose configuration for easy deployment with PostgreSQL:
 
 ```bash
-# Update docker-compose.yml to use PostgreSQL
-# Start services
+# Start all services (PostgreSQL + Backend)
 docker-compose up -d
 
-# Access backend
+# View logs
+docker-compose logs -f backend
+
+# Access backend container
 docker exec -it campus_eats_backend sh
 
-# Run migrations
-npm run prisma:migrate
+# Run migrations (first time setup)
+docker exec -it campus_eats_backend npm run prisma:migrate
+
+# Stop services
+docker-compose down
+
+# Stop and remove volumes
+docker-compose down -v
 ```
 
-**Note**: The default `docker-compose.yml` uses MongoDB. For PostgreSQL deployment, update the database service to:
-
-```yaml
-services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: campus_eats_postgres
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password123
-      POSTGRES_DB: campus_eats
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-```
+The Docker setup includes:
+- PostgreSQL 15 database with health checks
+- Backend API with automatic restart
+- Persistent data volumes
+- Networked services
 
 ## 📱 User Roles
 

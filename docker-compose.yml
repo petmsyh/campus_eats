@@ -1,21 +1,26 @@
 version: '3.8'
 
 services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7.0
-    container_name: campus_eats_mongodb
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: campus_eats_postgres
     restart: unless-stopped
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password123
-      MONGO_INITDB_DATABASE: campus_eats
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: campus_eats
     ports:
-      - "27017:27017"
+      - "5432:5432"
     volumes:
-      - mongodb_data:/data/db
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - campus_eats_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d campus_eats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Backend API
   backend:
@@ -29,7 +34,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      MONGODB_URI: mongodb://admin:password123@mongodb:27017/campus_eats?authSource=admin
+      DATABASE_URL: postgresql://admin:password123@postgres:5432/campus_eats?schema=public
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: 7d
       CHAPA_SECRET_KEY: ${CHAPA_SECRET_KEY}
@@ -38,14 +43,15 @@ services:
       FCM_SERVER_KEY: ${FCM_SERVER_KEY}
       FCM_PROJECT_ID: ${FCM_PROJECT_ID}
     depends_on:
-      - mongodb
+      postgres:
+        condition: service_healthy
     networks:
       - campus_eats_network
     volumes:
       - ./backend/logs:/app/logs
 
 volumes:
-  mongodb_data:
+  postgres_data:
     driver: local
 
 networks:
