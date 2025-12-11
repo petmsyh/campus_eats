@@ -85,10 +85,12 @@ const getCorsConfig = () => {
 
 /**
  * Request size limits to prevent DoS attacks
+ * 1MB is appropriate for API requests (food descriptions, images as URLs)
+ * Increase only if handling direct file uploads
  */
 const requestSizeLimits = {
-  json: { limit: '10mb' },
-  urlencoded: { limit: '10mb', extended: true }
+  json: { limit: '1mb' },
+  urlencoded: { limit: '1mb', extended: true }
 };
 
 module.exports = {

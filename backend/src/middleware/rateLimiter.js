@@ -16,11 +16,11 @@ const generalLimiter = rateLimit({
 
 /**
  * Strict rate limiter for authentication endpoints
- * Prevents brute force attacks
+ * Prevents brute force attacks while allowing for typos
  */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per window
+  max: 10, // 10 attempts per window (allows for typos)
   skipSuccessfulRequests: true, // Don't count successful requests
   message: {
     success: false,

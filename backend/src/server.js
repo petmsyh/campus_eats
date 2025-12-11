@@ -5,7 +5,7 @@ const morgan = require('morgan');
 const { connectDB } = require('./config/prisma');
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
-const { generalLimiter } = require('./middleware/rateLimiter');
+const { generalLimiter, authLimiter } = require('./middleware/rateLimiter');
 const sanitizeInput = require('./middleware/sanitize');
 const { helmetConfig, getCorsConfig, requestSizeLimits } = require('./config/security');
 
@@ -39,7 +39,7 @@ app.use(sanitizeInput);
 // Logging
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 
-// Rate limiting (prevents brute force and DoS)
+// General rate limiting (prevents DoS)
 app.use('/api/', generalLimiter);
 
 // Health check
@@ -51,8 +51,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
-app.use('/api/v1/auth', authRoutes);
+// API Routes with specific rate limiting
+app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/lounges', loungeRoutes);
 app.use('/api/v1/foods', foodRoutes);

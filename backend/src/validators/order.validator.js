@@ -1,22 +1,5 @@
-const { body, param, query, validationResult } = require('express-validator');
-
-/**
- * Middleware to handle validation results
- */
-const handleValidationErrors = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array().map(err => ({
-        field: err.path,
-        message: err.msg
-      }))
-    });
-  }
-  next();
-};
+const { body, param, query } = require('express-validator');
+const { handleValidationErrors } = require('../utils/validation');
 
 /**
  * Validation rules for creating an order
