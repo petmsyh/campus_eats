@@ -1,12 +1,13 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet');
 const morgan = require('morgan');
 const { connectDB } = require('./config/prisma');
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
-const rateLimiter = require('./middleware/rateLimiter');
+const { generalLimiter } = require('./middleware/rateLimiter');
+const sanitizeInput = require('./middleware/sanitize');
+const { helmetConfig, getCorsConfig, requestSizeLimits } = require('./config/security');
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
@@ -24,18 +25,22 @@ const app = express();
 // Connect to Database
 connectDB();
 
-// Middleware
-app.use(helmet()); // Security headers
-app.use(cors({
-  origin: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : false),
-  credentials: true
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Security Middleware
+app.use(helmetConfig); // Security headers (OWASP)
+app.use(cors(getCorsConfig())); // CORS with whitelist
+
+// Body parsing with size limits (prevents DoS)
+app.use(express.json(requestSizeLimits.json));
+app.use(express.urlencoded(requestSizeLimits.urlencoded));
+
+// Input sanitization (prevents XSS)
+app.use(sanitizeInput);
+
+// Logging
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 
-// Rate limiting
-app.use('/api/', rateLimiter);
+// Rate limiting (prevents brute force and DoS)
+app.use('/api/', generalLimiter);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -1,0 +1,20 @@
+Contact: mailto:security@campuseats.et
+Expires: 2025-12-31T23:59:59.000Z
+Preferred-Languages: en, am
+Canonical: https://campuseats.et/.well-known/security.txt
+Policy: https://campuseats.et/security-policy
+Acknowledgments: https://campuseats.et/security-acknowledgments
+
+# Security Policy
+# 
+# If you discover a security vulnerability in Campus Eats, please report it
+# responsibly by emailing security@campuseats.et
+#
+# Please include:
+# - Description of the vulnerability
+# - Steps to reproduce
+# - Potential impact
+# - Suggested fix (if any)
+#
+# We will acknowledge receipt within 48 hours and provide a detailed response
+# within 7 days.
