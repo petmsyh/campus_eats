@@ -1,29 +1,42 @@
 const logger = require('../utils/logger');
 
+/**
+ * Enhanced error handler middleware
+ * Prevents information leakage while providing useful feedback
+ */
 const errorHandler = (err, req, res, next) => {
+  // Log full error details for debugging (server-side only)
   logger.error('Error:', {
     message: err.message,
     stack: err.stack,
     url: req.originalUrl,
-    method: req.method
+    method: req.method,
+    body: req.body,
+    user: req.user?.id
   });
 
-  // Mongoose validation error
-  if (err.name === 'ValidationError') {
-    const errors = Object.values(err.errors).map(e => e.message);
+  // Prisma validation error
+  if (err.code === 'P2002') {
+    const target = err.meta?.target || ['field'];
     return res.status(400).json({
       success: false,
-      message: 'Validation Error',
-      errors
+      message: `${target[0]} already exists`
     });
   }
 
-  // Mongoose duplicate key error
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern)[0];
+  // Prisma record not found
+  if (err.code === 'P2025') {
+    return res.status(404).json({
+      success: false,
+      message: 'Record not found'
+    });
+  }
+
+  // Prisma foreign key constraint
+  if (err.code === 'P2003') {
     return res.status(400).json({
       success: false,
-      message: `${field} already exists`
+      message: 'Invalid reference to related record'
     });
   }
 
@@ -31,22 +44,39 @@ const errorHandler = (err, req, res, next) => {
   if (err.name === 'JsonWebTokenError') {
     return res.status(401).json({
       success: false,
-      message: 'Invalid token'
+      message: 'Invalid authentication token'
     });
   }
 
   if (err.name === 'TokenExpiredError') {
     return res.status(401).json({
       success: false,
-      message: 'Token expired'
+      message: 'Authentication token has expired'
     });
   }
 
-  // Default error
-  res.status(err.statusCode || 500).json({
+  // Validation errors (express-validator)
+  if (err.name === 'ValidationError') {
+    return res.status(400).json({
+      success: false,
+      message: 'Validation failed',
+      errors: err.errors
+    });
+  }
+
+  // Default error - prevent stack trace leakage in production
+  const statusCode = err.statusCode || 500;
+  const message = statusCode === 500 && process.env.NODE_ENV === 'production'
+    ? 'An unexpected error occurred. Please try again later.'
+    : err.message || 'Internal Server Error';
+
+  res.status(statusCode).json({
     success: false,
-    message: err.message || 'Internal Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    message,
+    ...(process.env.NODE_ENV === 'development' && { 
+      stack: err.stack,
+      details: err 
+    })
   });
 };
 
